@@ -1,48 +1,86 @@
 {
-    "$schema": "http://json-schema.org/draft-04/schema",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "SpinPath Model Configuration",
+    "description": "Configuration for a SpinPath model, supporting various model types.",
     "type": "object",
     "properties": {
         "spec_version": {
             "type": "string",
-            "description": "Version of the specification used (eg '1.0')"
+            "description": "Version of this configuration specification (e.g., '1.0', '1.1')."
+        },
+        "model_type": {
+            "type": "string",
+            "description": "Type of the model.",
+            "enum": [
+                "torchscript",
+                "feature_extractor",
+                "trainable_classifier"
+            ]
+        },
+        "architecture_name": {
+            "type": "string",
+            "description": "Name of the model architecture (e.g., 'ResNet50', 'ABMIL', 'UNIv2', 'RetCCL'). This name is used to identify how to construct or load the model."
+        },
+        "architecture_params": {
+            "type": "object",
+            "description": "Parameters specific to the model architecture. Examples: {'input_dim': 1024, 'output_dim': 256} for a custom MLP, or {'timm_model_name': 'resnet50', 'pretrained': true} for a TIMM-based model. Can also include 'weights_file': 'custom_weights.pth' for non-standard HF weight file names.",
+            "additionalProperties": true
+        },
+        "patch_size_um": {
+            "type": "number",
+            "description": "The size of the input patch in micrometers (e.g., 128, 224, 256). Assumed to be square if a single number is provided.",
+            "minimum": 1
+        },
+        "feature_extractor": {
+            "type": "string",
+            "description": "Identifier for an upstream feature extractor. Used if 'model_type' is 'trainable_classifier' and it operates on pre-computed features, or if this model itself is a feature extractor that fine-tunes/modifies another."
         },
         "num_classes": {
             "type": "integer",
-            "description": "The number of classes the model outputs",
+            "description": "The number of output classes. Required if 'model_type' is 'torchscript' or 'trainable_classifier'.",
             "minimum": 1
         },
         "class_names": {
             "type": "array",
-            "description": "The names of the classes the model outputs. Length must be equal to 'num_classes'.",
+            "description": "Names of the output classes. Length must match 'num_classes'. Required if 'model_type' is 'torchscript' or 'trainable_classifier'.",
             "items": {
                 "type": "string"
             },
             "uniqueItems": true
-        },
-        "feature_extractor": {
-            "type": "string",
-            "description": "The feature extractor to use with this model."
-        },
-        "patch_size_um": {
-            "type": "number",
-            "description": "The size of the patch in micrometers (eg 128)",
-            "minimum": 1
-        },
-        "type": {
-            "type": "string",
-            "description": "The type of MIL method used.",
-            "enum": [
-                "abmil",
-                "clam",
-                "porpoise"
-            ]
         }
     },
     "required": [
         "spec_version",
-        "num_classes",
-        "class_names",
-        "feature_extractor",
+        "model_type",
+        "architecture_name",
         "patch_size_um"
-    ]
+    ],
+    "if": {
+        "properties": {
+            "model_type": {
+                "const": "trainable_classifier"
+            }
+        }
+    },
+    "then": {
+        "required": [
+            "num_classes",
+            "class_names"
+        ]
+    },
+    "else if": {
+        "if": {
+            "properties": {
+                "model_type": {
+                    "const": "torchscript"
+                }
+            }
+        },
+        "then": {
+            "required": [
+                "num_classes",
+                "class_names"
+            ]
+        }
+    }
 }

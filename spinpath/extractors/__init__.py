@@ -7,6 +7,7 @@ from .phikon import Phikon
 from .phikonv2 import PhikonV2
 from .provgigapath import ProvGigaPath
 from .uni import UNI
+from .uni2 import UNI2  # Import the new UNI2 extractor
 from .virchow import Virchow
 from .virchow2 import Virchow2
 
@@ -19,6 +20,7 @@ EXTRACTORS: dict[str, type[PatchFeatureExtractor]] = {
     "phikonv2": PhikonV2,
     "provgigapath": ProvGigaPath,
     "uni": UNI,
+    "uni2": UNI2,  # Add UNI2 to the dictionary
     "virchow": Virchow,
     "virchow2": Virchow2,
 }

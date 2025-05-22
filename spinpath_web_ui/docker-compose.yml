@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000" # Exposes backend on host port 8000
+    volumes:
+      - ./uploaded_slides_volume:/app/uploaded_slides # Persists uploaded slides
+      # Optional: For development, you might mount the source code
+      # - ./backend:/app 
+    container_name: spinpath-backend
+    environment:
+      # Add any backend-specific environment variables here if needed
+      # مثلاً: PYTHONUNBUFFERED: 1
+      #       SLIDE_STORE_PATH: /app/uploaded_slides
+      PYTHONUNBUFFERED: 1 # Ensures print statements appear in logs immediately
+    networks:
+      - spinpath-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80" # Exposes frontend on host port 8080 (Nginx listens on 80 in container)
+    container_name: spinpath-frontend
+    depends_on:
+      - backend # Ensures backend starts before frontend, though frontend should handle backend unavailability
+    environment:
+      # If you need to configure the backend URL for the frontend at runtime:
+      # (This requires the frontend app to be able to consume this env var)
+      # VUE_APP_BACKEND_URL: http://backend:8000 
+      # Note: The Vue app created with default CLI and axios calls directly to localhost:8000.
+      # For container-to-container communication, frontend would call 'http://backend:8000'.
+      # This setup assumes the frontend will call the backend via localhost:8000 as exposed on the host,
+      # or the frontend code is adjusted to use a relative path or a configurable backend URL.
+      # For simplicity, the current Vue components call "http://localhost:8000".
+      # When running via Docker Compose, if the frontend (browser) tries to access "localhost:8000",
+      # it will correctly hit the backend container exposed on the host's port 8000.
+      NGINX_PORT: 80
+    networks:
+      - spinpath-net
+
+volumes:
+  uploaded_slides_volume: # Defines a named volume for slide storage
+
+networks:
+  spinpath-net: # Defines a custom bridge network
+    driver: bridge

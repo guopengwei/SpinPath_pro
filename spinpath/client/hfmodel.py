@@ -35,7 +35,7 @@ class HFModel(Model):
     Inherits 'config', 'model_path', and 'model_instance' from localmodel.Model.
     """
 
-    hf_info: HFInfo
+    hf_info: HFInfo | None = None
     # model_path will now point to the primary downloaded model file (e.g. .pt or .bin)
     # or potentially a directory if multiple components are downloaded.
 
@@ -110,3 +110,12 @@ def load_model_from_hf(
         model_instance=model_instance # This would be populated by actual loading logic
     )
     return model
+
+def load_torchscript_model_from_hf(
+    repo_id: str, revision: str | None = None
+) -> HFModel:
+    """Load a TorchScript model from HuggingFace Hub.
+    
+    This is a convenience function that specifically loads TorchScript models.
+    """
+    return load_model_from_hf(repo_id, revision, HF_TORCHSCRIPT_MODEL_NAME)

@@ -150,4 +150,3 @@ def extract_features_for_slide(
         logger.info(f"Saved extracted embeddings to cache for {slide_path}")
 
     return embedding, coords
-```

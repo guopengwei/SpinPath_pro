@@ -77,17 +77,3 @@ class UNI2(PatchFeatureExtractor):
         assert isinstance(transform, Compose), \
             f"Expected create_transform to return a torchvision.transforms.Compose, but got {type(transform)}"
         return transform
-
-    # Optional: Implement a forward_features method if UNI2/timm requires a specific way
-    # to get features rather than just model(x)
-    # def forward(self, x: torch.Tensor) -> torch.Tensor:
-    #     """Extract features from the input tensor."""
-    #     if self._model is None:
-    #         raise RuntimeError("Model not loaded. Cannot perform forward pass.")
-    #     with torch.no_grad():
-    #         features = self._model.forward_features(x) # Example if UNI2 has .forward_features
-    #         # Or if it's a different method, adjust accordingly.
-    #         # If the main forward pass already returns features, this method might not be needed
-    #         # and the base class's __call__ would suffice.
-    #     return features
-```

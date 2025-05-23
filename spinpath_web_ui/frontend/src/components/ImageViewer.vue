@@ -1,120 +1,673 @@
 <template>
   <div class="image-viewer-container">
-    <div :id="viewerId" class="openseadragon-viewer"></div>
-    <p v-if="slideId">Displaying viewer for Slide ID: {{ slideId }}</p>
-    <p v-else>No slide selected for viewer.</p>
+    <!-- Viewer Controls -->
+    <div class="viewer-controls" v-if="slideInfo">
+      <div class="control-group">
+        <button @click="zoomIn" class="control-btn" title="Zoom In">
+          <i class="icon-zoom-in">🔍+</i>
+        </button>
+        <button @click="zoomOut" class="control-btn" title="Zoom Out">
+          <i class="icon-zoom-out">🔍-</i>
+        </button>
+        <button @click="goHome" class="control-btn" title="Home">
+          <i class="icon-home">🏠</i>
+        </button>
+        <button @click="fullScreen" class="control-btn" title="Full Screen">
+          <i class="icon-fullscreen">⛶</i>
+        </button>
+      </div>
+      
+      <div class="control-group">
+        <label for="level-select">Level:</label>
+        <select id="level-select" v-model="selectedLevel" @change="changeLevel" class="level-select">
+          <option v-for="(level, index) in slideInfo.level_count" :key="index" :value="index">
+            Level {{ index }} ({{ slideInfo.level_dimensions[index][0] }}×{{ slideInfo.level_dimensions[index][1] }})
+          </option>
+        </select>
+      </div>
+      
+      <div class="control-group info-display">
+        <span class="info-item">{{ slideInfo.dimensions[0] }}×{{ slideInfo.dimensions[1] }}px</span>
+        <span class="info-item" v-if="slideInfo.mpp_x">{{ slideInfo.mpp_x.toFixed(3) }} μm/px</span>
+        <span class="info-item" v-if="slideInfo.objective_power">{{ slideInfo.objective_power }}×</span>
+        <span class="info-item zoom-info">Zoom: {{ currentZoom }}%</span>
+      </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div v-if="loading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <p>Loading slide...</p>
+    </div>
+
+    <!-- Error Display -->
+    <div v-if="error" class="error-display">
+      <h3>Error Loading Slide</h3>
+      <p>{{ error }}</p>
+      <button @click="retryLoad" class="retry-btn">Retry</button>
+    </div>
+
+    <!-- OpenSeadragon Viewer Container -->
+    <div 
+      ref="viewerContainer" 
+      id="openseadragon-viewer" 
+      class="viewer-container"
+      :class="{ 'fullscreen': isFullscreen }"
+    ></div>
+
+    <!-- Slide Information Panel -->
+    <div v-if="slideInfo && showInfo" class="info-panel">
+      <h3>Slide Information</h3>
+      <div class="info-grid">
+        <div class="info-row">
+          <span class="label">Format:</span>
+          <span class="value">{{ slideInfo.slide_format }}</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Dimensions:</span>
+          <span class="value">{{ slideInfo.dimensions[0] }} × {{ slideInfo.dimensions[1] }} pixels</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Levels:</span>
+          <span class="value">{{ slideInfo.level_count }}</span>
+        </div>
+        <div class="info-row" v-if="slideInfo.mpp_x">
+          <span class="label">Resolution:</span>
+          <span class="value">{{ slideInfo.mpp_x.toFixed(3) }} × {{ slideInfo.mpp_y.toFixed(3) }} μm/pixel</span>
+        </div>
+        <div class="info-row" v-if="slideInfo.objective_power">
+          <span class="label">Objective:</span>
+          <span class="value">{{ slideInfo.objective_power }}×</span>
+        </div>
+        <div class="info-row">
+          <span class="label">File Size:</span>
+          <span class="value">{{ formatFileSize(slideInfo.file_size) }}</span>
+        </div>
+      </div>
+      <button @click="showInfo = false" class="close-info-btn">Close</button>
+    </div>
+
+    <!-- Navigation Minimap -->
+    <div v-if="viewer && showMinimap" class="minimap-container" ref="minimapContainer"></div>
+
+    <!-- Annotation Overlay (for future implementation) -->
+    <div v-if="viewer && annotations.length > 0" class="annotation-overlay">
+      <!-- Annotations will be rendered here -->
+    </div>
   </div>
 </template>
 
 <script>
-import OpenSeadragon from 'openseadragon';
+// Import OpenSeadragon
+import OpenSeadragon from 'openseadragon'
 
 export default {
   name: 'ImageViewer',
   props: {
     slideId: {
       type: String,
-      default: null,
+      required: true
     },
+    annotations: {
+      type: Array,
+      default: () => []
+    },
+    showControls: {
+      type: Boolean,
+      default: true
+    },
+    enableAnnotations: {
+      type: Boolean,
+      default: false
+    }
   },
   data() {
     return {
       viewer: null,
-      viewerId: 'openseadragon-viewer-' + Math.random().toString(36).substring(7), // Unique ID for the viewer div
-    };
+      slideInfo: null,
+      loading: false,
+      error: null,
+      selectedLevel: 0,
+      currentZoom: 100,
+      isFullscreen: false,
+      showInfo: false,
+      showMinimap: true,
+      tileSourceConfig: null,
+      viewerReady: false
+    }
+  },
+  async mounted() {
+    await this.initViewer()
+  },
+  beforeUnmount() {
+    this.cleanup()
   },
   watch: {
-    slideId(newSlideId) {
-      if (newSlideId) {
-        this.initViewer(newSlideId);
-      } else if (this.viewer) {
-        this.viewer.destroy();
-        this.viewer = null;
-      }
+    slideId: {
+      handler: 'loadSlide',
+      immediate: false
     }
   },
   methods: {
-    initViewer(slideIdToView) {
-      if (this.viewer) {
-        this.viewer.destroy();
+    async initViewer() {
+      this.loading = true
+      this.error = null
+
+      try {
+        // Load slide information
+        await this.loadSlideInfo()
+        
+        // Initialize OpenSeadragon viewer
+        this.setupOpenSeadragon()
+        
+        // Load the slide
+        await this.loadSlide()
+        
+      } catch (error) {
+        console.error('Error initializing viewer:', error)
+        this.error = error.message || 'Failed to initialize viewer'
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async loadSlideInfo() {
+      try {
+        const response = await fetch(`/api/slides/${this.slideId}/info`)
+        if (!response.ok) {
+          throw new Error(`Failed to load slide info: ${response.statusText}`)
+        }
+        this.slideInfo = await response.json()
+      } catch (error) {
+        throw new Error(`Failed to load slide information: ${error.message}`)
+      }
+    },
+
+    setupOpenSeadragon() {
+      // OpenSeadragon configuration
+      const config = {
+        id: 'openseadragon-viewer',
+        prefixUrl: 'https://cdn.jsdelivr.net/npm/openseadragon@3.1.0/build/openseadragon/images/',
+        
+        // Navigation and UI
+        showNavigationControl: this.showControls,
+        showZoomControl: true,
+        showHomeControl: true,
+        showFullPageControl: true,
+        showRotationControl: false,
+        showSequenceControl: false,
+        navigationControlAnchor: OpenSeadragon.ControlAnchor.TOP_LEFT,
+        
+        // Zooming
+        zoomInButton: 'zoom-in-btn',
+        zoomOutButton: 'zoom-out-btn',
+        homeButton: 'home-btn',
+        fullPageButton: 'fullscreen-btn',
+        minZoomLevel: 0.1,
+        maxZoomLevel: 10,
+        zoomPerClick: 2,
+        zoomPerScroll: 1.2,
+        
+        // Performance
+        immediateRender: false,
+        blendTime: 0.1,
+        alwaysBlend: false,
+        showNavigator: this.showMinimap,
+        navigatorPosition: 'BOTTOM_RIGHT',
+        navigatorSizeRatio: 0.15,
+        
+        // Tiles
+        preserveImageSizeOnResize: true,
+        useCanvas: true,
+        smoothTileEdgesMinZoom: 1.1,
+        iOSDevice: /iPad|iPhone|iPod/.test(navigator.userAgent),
+        
+        // Custom tile source (will be set in loadSlide)
+        tileSources: null
       }
 
-      // IMPORTANT: The backend tileSource endpoint currently returns JSON.
-      // OpenSeadragon expects image tiles. This will likely result in errors
-      // or a blank viewer. This is expected for this step.
-      // We will adapt the backend or use a custom tile source later.
-      // const tileSourceUrl = `http://localhost:8000/slides/${slideIdToView}/tile/`;
-
-      this.viewer = OpenSeadragon({
-        id: this.viewerId,
-        prefixUrl: 'https://openseadragon.github.io/openseadragon/images/', // Default OSD images
-        tileSources: {
-          type: 'image', // This is a placeholder type. For DZI or custom, this would change.
-                          // For now, we're pointing to a URL that should serve tiles.
-                          // OpenSeadragon might try to append standard tile requests like /0/0_0.png
-          url: `http://localhost:8000/slides/${slideIdToView}/tile_placeholder.jpg`, // Placeholder, will cause 404 or error.
-                                                                                      // This needs to be a DZI file or a custom tile source.
-          // For a custom tile source that matches our backend:
-          // getTileUrl: function(level, x, y) {
-          //    // Our backend has /level/z/x/y, OSD uses level, x, y. We need to map this.
-          //    // Assuming 'z' can be defaulted or is part of 'level' logic.
-          //    // For now, let's assume a simple mapping for z=0 or fixed.
-          //    // THIS IS A SIMPLIFICATION AND WILL NEED REFINEMENT.
-          //    return `${tileSourceUrl}${level}/0/${x}/${y}`;
-          // }
-          // Since our backend returns JSON for tiles now, let's use a more direct, albeit likely non-functional, approach for this step.
-          // We will need a proper DZI or custom tile source for actual image display.
-          // The line below is how one might structure it for a custom source, but it won't work with current backend.
-          // For now, let's use a simple image type pointing to a non-existent DZI to see OSD initialize.
-          // This will be replaced with a proper Deep Zoom Image (DZI) source or a custom tile source later.
-          // For this step, we'll use a placeholder that OpenSeadragon can try to load.
-          // A common test DZI is available, but let's stick to our backend structure for now,
-          // acknowledging it won't display an image yet.
-           levels: [/* mock levels if needed, or let OSD try to figure it out */],
-           width: 8000, // Placeholder width
-           height: 6000, // Placeholder height
-           tileSize: 256,
-           getTileUrl: function(level, x, y) {
-               // This matches the backend's /slides/{slide_id}/tile/{level}/{z}/{x}/{y}
-               // We'll use a fixed z=0 for now.
-               // This will still fail to load an image because the backend returns JSON, not an image.
-               // But it sets up the structure for future integration.
-               return `http://localhost:8000/slides/${slideIdToView}/tile/${level}/0/${x}/${y}.png`; // Added .png for OSD to treat as image
-           }
-        },
-        showNavigator: true,
-      });
-
-      this.viewer.addHandler('open-failed', (event) => {
-        console.error('OpenSeadragon open-failed:', event);
-        // This error is expected at this stage due to backend returning JSON.
-      });
+      this.viewer = OpenSeadragon(config)
+      
+      // Set up event listeners
+      this.setupEventListeners()
     },
-  },
-  mounted() {
-    if (this.slideId) {
-      this.initViewer(this.slideId);
+
+    setupEventListeners() {
+      if (!this.viewer) return
+
+      // Zoom change handler
+      this.viewer.addHandler('zoom', (event) => {
+        this.currentZoom = Math.round(event.zoom * 100)
+      })
+
+      // Open handler
+      this.viewer.addHandler('open', () => {
+        this.viewerReady = true
+        this.$emit('viewer-ready', this.viewer)
+      })
+
+      // Tile load handlers for performance monitoring
+      let tilesLoading = 0
+      let tilesLoaded = 0
+
+      this.viewer.addHandler('tile-load-failed', (event) => {
+        console.warn('Tile load failed:', event)
+      })
+
+      this.viewer.addHandler('tile-loading', () => {
+        tilesLoading++
+      })
+
+      this.viewer.addHandler('tile-loaded', () => {
+        tilesLoaded++
+        if (tilesLoaded >= tilesLoading) {
+          // All visible tiles loaded
+          this.$emit('tiles-loaded')
+        }
+      })
+
+      // Full screen handlers
+      this.viewer.addHandler('full-screen', (event) => {
+        this.isFullscreen = event.fullScreen
+      })
+
+      // Error handler
+      this.viewer.addHandler('open-failed', (event) => {
+        this.error = 'Failed to open slide: ' + event.message
+        this.loading = false
+      })
+    },
+
+    async loadSlide() {
+      if (!this.slideInfo || !this.viewer) return
+
+      try {
+        this.loading = true
+        this.error = null
+
+        // Create custom tile source for SpinPath backend
+        const tileSource = this.createTileSource()
+        
+        // Open the tile source in OpenSeadragon
+        this.viewer.open(tileSource)
+        
+      } catch (error) {
+        console.error('Error loading slide:', error)
+        this.error = error.message || 'Failed to load slide'
+      } finally {
+        this.loading = false
+      }
+    },
+
+    createTileSource() {
+      // Create a custom tile source configuration for our backend
+      const tileSource = {
+        height: this.slideInfo.dimensions[1],
+        width: this.slideInfo.dimensions[0],
+        tileSize: this.slideInfo.tile_size[0],
+        minLevel: 0,
+        maxLevel: this.slideInfo.level_count - 1,
+        
+        // Custom tile URL function
+        getTileUrl: (level, x, y) => {
+          return `/api/slides/${this.slideId}/tile/${level}/${x}/${y}?format=JPEG&quality=85`
+        },
+
+        // Support for different levels with actual dimensions
+        getLevelScale: (level) => {
+          return 1.0 / this.slideInfo.level_downsamples[level]
+        },
+
+        // Get number of tiles for a level
+        getNumTiles: (level) => {
+          const levelDims = this.slideInfo.level_dimensions[level]
+          const tileSize = this.slideInfo.tile_size[0]
+          return {
+            x: Math.ceil(levelDims[0] / tileSize),
+            y: Math.ceil(levelDims[1] / tileSize)
+          }
+        },
+
+        // Support for pixel density if available
+        ...(this.slideInfo.mpp_x && {
+          pixelDensityRatio: 1.0 / this.slideInfo.mpp_x
+        })
+      }
+
+      return tileSource
+    },
+
+    // Control methods
+    zoomIn() {
+      if (this.viewer) {
+        this.viewer.viewport.zoomBy(2)
+      }
+    },
+
+    zoomOut() {
+      if (this.viewer) {
+        this.viewer.viewport.zoomBy(0.5)
+      }
+    },
+
+    goHome() {
+      if (this.viewer) {
+        this.viewer.viewport.goHome()
+      }
+    },
+
+    fullScreen() {
+      if (this.viewer) {
+        this.viewer.setFullScreen(!this.viewer.isFullScreen())
+      }
+    },
+
+    changeLevel() {
+      // For future implementation: level-specific viewing
+      console.log('Changed to level:', this.selectedLevel)
+    },
+
+    toggleInfo() {
+      this.showInfo = !this.showInfo
+    },
+
+    retryLoad() {
+      this.initViewer()
+    },
+
+    // Utility methods
+    formatFileSize(bytes) {
+      if (!bytes) return 'Unknown'
+      const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
+      if (bytes === 0) return '0 Bytes'
+      const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)))
+      return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i]
+    },
+
+    cleanup() {
+      if (this.viewer) {
+        this.viewer.destroy()
+        this.viewer = null
+      }
+    },
+
+    // Public API methods for parent components
+    getViewer() {
+      return this.viewer
+    },
+
+    getSlideInfo() {
+      return this.slideInfo
+    },
+
+    addAnnotation(annotation) {
+      // For future implementation
+      this.annotations.push(annotation)
+    },
+
+    removeAnnotation(id) {
+      // For future implementation
+      const index = this.annotations.findIndex(a => a.id === id)
+      if (index !== -1) {
+        this.annotations.splice(index, 1)
+      }
     }
-  },
-  beforeUnmount() {
-    if (this.viewer) {
-      this.viewer.destroy();
-    }
-  },
-};
+  }
+}
 </script>
 
 <style scoped>
 .image-viewer-container {
-  margin: 20px;
-  padding: 10px;
-  border: 1px solid #ddd;
-  background-color: #f0f0f0;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
 }
-.openseadragon-viewer {
-  width: 800px; /* Adjust as needed */
-  height: 600px; /* Adjust as needed */
-  background-color: #fff;
-  border: 1px solid #aaa;
+
+.viewer-controls {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  z-index: 1000;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 8px 12px;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.control-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 14px;
+  min-width: 40px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.control-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.level-select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  min-width: 150px;
+}
+
+.level-select option {
+  background: #333;
+  color: white;
+}
+
+.info-display {
+  display: flex;
+  gap: 15px;
+  font-size: 12px;
+}
+
+.info-item {
+  color: rgba(255, 255, 255, 0.9);
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.zoom-info {
+  font-weight: bold;
+  color: #4CAF50;
+}
+
+.viewer-container {
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
+.viewer-container.fullscreen {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 9999 !important;
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  color: white;
+}
+
+.loading-spinner {
+  width: 50px;
+  height: 50px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top: 3px solid #4CAF50;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 20px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.error-display {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(244, 67, 54, 0.9);
+  color: white;
+  padding: 20px;
+  border-radius: 8px;
+  text-align: center;
+  z-index: 2000;
+  max-width: 400px;
+}
+
+.retry-btn {
+  background: white;
+  color: #f44336;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 10px;
+  font-weight: bold;
+}
+
+.info-panel {
+  position: absolute;
+  top: 70px;
+  right: 10px;
+  background: rgba(0, 0, 0, 0.9);
+  color: white;
+  padding: 20px;
+  border-radius: 8px;
+  max-width: 300px;
+  z-index: 1500;
+  backdrop-filter: blur(10px);
+}
+
+.info-panel h3 {
+  margin: 0 0 15px 0;
+  color: #4CAF50;
+  font-size: 16px;
+}
+
+.info-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.info-row .label {
+  font-weight: bold;
+  color: rgba(255, 255, 255, 0.7);
+  min-width: 80px;
+}
+
+.info-row .value {
+  color: white;
+  text-align: right;
+}
+
+.close-info-btn {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 15px;
+  width: 100%;
+}
+
+.minimap-container {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  width: 150px;
+  height: 100px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  z-index: 1000;
+}
+
+.annotation-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 500;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .viewer-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .control-group {
+    justify-content: center;
+  }
+  
+  .info-display {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  
+  .info-panel {
+    right: 5px;
+    left: 5px;
+    max-width: none;
+  }
 }
 </style>
